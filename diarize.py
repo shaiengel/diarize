@@ -1,8 +1,23 @@
-"""Speaker diarization using PyAnnote.audio pipeline."""
+"""Speaker diarization using PyAnnote.audio pipeline.
+
+SPEAKER IDENTIFICATION
+    You can optionally provide reference voice samples for known speakers:
+    
+    speaker_refs = {
+        "Alice": "path/to/alice_sample.wav",
+        "Bob": ["path/to/bob1.wav", "path/to/bob2.wav"],  # multiple samples = better
+    }
+    segments = diarize(audio_path, transcription_segments, speaker_references=speaker_refs)
+    # segments will have speaker="Alice", "Bob", or "SPEAKER_XX" for unknowns
+
+    Requires accepting the embedding model license (one-time, free):
+        https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
+"""
 
 import logging
 import os
 import subprocess
+import tempfile
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -39,6 +54,8 @@ torch.load = _patched_torch_load
 # torch.load = _patched_torch_load
 
 from pyannote.audio import Pipeline
+from pyannote.audio import Model, Inference
+from pyannote.core import Segment as PyannoteSegment
 
 from main import Segment, Word
 
@@ -49,6 +66,207 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
+
+
+# =============================================================================
+# SPEAKER IDENTIFICATION — match detected speakers to known voice samples
+# =============================================================================
+
+class SpeakerIdentifier:
+    """Identifies speakers by matching voice embeddings to reference samples."""
+    
+    EMBEDDING_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"
+    
+    def __init__(self, device: torch.device | str = "cpu"):
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self._inference: Optional[Inference] = None
+    
+    @property
+    def inference(self) -> Inference:
+        """Lazy-load the embedding model."""
+        if self._inference is None:
+            token = os.getenv("HF_TOKEN")
+            model = Model.from_pretrained(self.EMBEDDING_MODEL, token=token)
+            self._inference = Inference(model, window="whole")
+            self._inference.to(self.device)
+            logger.info(f"Loaded speaker embedding model on {self.device}")
+        return self._inference
+    
+    def _to_wav16k(self, src: str) -> str:
+        """Transcode any audio to 16 kHz mono WAV via ffmpeg."""
+        dst = tempfile.mktemp(suffix=".16k.wav")
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-ac", "1", "-ar", "16000", "-vn", "-f", "wav", dst],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        if proc.returncode != 0 or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+            raise RuntimeError("ffmpeg transcode failed: " 
+                               + proc.stderr.decode("utf-8", "replace")[:300])
+        return dst
+    
+    def extract_embedding(self, audio_path: str) -> npt.NDArray:
+        """Extract a speaker embedding vector from an audio file.
+        
+        Args:
+            audio_path: Path to audio file (any format ffmpeg supports).
+        
+        Returns:
+            numpy array of shape (256,) — the speaker embedding.
+        """
+        wav = self._to_wav16k(audio_path)
+        try:
+            embedding = self.inference(wav)
+            return np.array(embedding)
+        finally:
+            try:
+                os.unlink(wav)
+            except OSError:
+                pass
+    
+    def extract_embedding_from_segment(self, audio_path: str, start: float, end: float) -> npt.NDArray:
+        """Extract embedding from a specific time segment of an audio file.
+        
+        Args:
+            audio_path: Path to the full audio file.
+            start: Start time in seconds.
+            end: End time in seconds.
+        
+        Returns:
+            numpy array of shape (256,) — the speaker embedding for that segment.
+        """
+        wav = self._to_wav16k(audio_path)
+        try:
+            segment = PyannoteSegment(start, end)
+            embedding = self.inference.crop(wav, segment)
+            return np.array(embedding)
+        finally:
+            try:
+                os.unlink(wav)
+            except OSError:
+                pass
+    
+    def build_speaker_profiles(
+        self, 
+        speaker_references: dict[str, str | list[str]]
+    ) -> dict[str, npt.NDArray]:
+        """Build embedding profiles for known speakers from reference audio samples.
+        
+        Args:
+            speaker_references: Dict mapping speaker name to audio path(s).
+                e.g. {"Alice": "alice.wav"} or {"Bob": ["bob1.wav", "bob2.wav"]}
+        
+        Returns:
+            Dict mapping speaker name to averaged embedding vector.
+        """
+        profiles = {}
+        for name, paths in speaker_references.items():
+            if isinstance(paths, str):
+                paths = [paths]
+            
+            embeddings = []
+            for path in paths:
+                if not os.path.exists(path):
+                    logger.warning(f"Reference audio not found: {path}")
+                    continue
+                try:
+                    emb = self.extract_embedding(path)
+                    embeddings.append(emb)
+                    logger.info(f"Loaded reference for '{name}' from {path}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract embedding from {path}: {e}")
+            
+            if embeddings:
+                # Average multiple samples for more robust profile
+                profiles[name] = np.mean(embeddings, axis=0)
+        
+        return profiles
+    
+    @staticmethod
+    def cosine_similarity(a: npt.NDArray, b: npt.NDArray) -> float:
+        """Compute cosine similarity between two vectors."""
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10))
+    
+    def identify_speakers(
+        self,
+        diarization_df: pd.DataFrame,
+        audio_path: str,
+        speaker_profiles: dict[str, npt.NDArray],
+        similarity_threshold: float = 0.5,
+    ) -> dict[str, str]:
+        """Match detected speakers to known speaker profiles.
+        
+        For each unique speaker in the diarization output, extracts their embedding
+        (using their longest turn) and compares against known profiles.
+        
+        Args:
+            diarization_df: Diarization dataframe with columns ['start', 'end', 'speaker'].
+            audio_path: Path to the original audio file.
+            speaker_profiles: Dict from build_speaker_profiles().
+            similarity_threshold: Min cosine similarity to match (0.5 is reasonable).
+        
+        Returns:
+            Dict mapping detected speaker labels to identified names.
+        """
+        if not speaker_profiles:
+            return {}
+        
+        # Find the longest segment for each detected speaker
+        speaker_segments = {}
+        for _, row in diarization_df.iterrows():
+            spk = row["speaker"]
+            duration = row["end"] - row["start"]
+            if spk not in speaker_segments or duration > speaker_segments[spk]["duration"]:
+                speaker_segments[spk] = {
+                    "start": row["start"],
+                    "end": row["end"],
+                    "duration": duration
+                }
+        
+        # Extract embedding for each detected speaker (using their longest turn)
+        detected_embeddings = {}
+        wav = self._to_wav16k(audio_path)
+        try:
+            for spk, seg in speaker_segments.items():
+                # Need at least 0.5s of audio for a reliable embedding
+                if seg["duration"] < 0.5:
+                    logger.warning(f"Speaker {spk} has no segment >= 0.5s, skipping ID")
+                    continue
+                try:
+                    segment = PyannoteSegment(seg["start"], seg["end"])
+                    emb = self.inference.crop(wav, segment)
+                    detected_embeddings[spk] = np.array(emb)
+                except Exception as e:
+                    logger.warning(f"Failed to extract embedding for {spk}: {e}")
+        finally:
+            try:
+                os.unlink(wav)
+            except OSError:
+                pass
+        
+        # Match detected speakers to known profiles
+        speaker_mapping = {}
+        used_profiles = set()
+        
+        for detected_spk, detected_emb in detected_embeddings.items():
+            best_match = None
+            best_score = similarity_threshold
+            
+            for profile_name, profile_emb in speaker_profiles.items():
+                if profile_name in used_profiles:
+                    continue
+                score = self.cosine_similarity(detected_emb, profile_emb)
+                if score > best_score:
+                    best_score = score
+                    best_match = profile_name
+            
+            if best_match:
+                speaker_mapping[detected_spk] = best_match
+                used_profiles.add(best_match)
+                logger.info(f"Matched {detected_spk} -> '{best_match}' (similarity={best_score:.3f})")
+            else:
+                logger.info(f"{detected_spk}: no match above threshold ({similarity_threshold})")
+        
+        return speaker_mapping
 
 
 def load_audio(file: str, sr: int = SAMPLE_RATE) -> npt.NDArray:
@@ -178,6 +396,8 @@ class PyannoteDiarizationEngine:
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
         use_auth_token: Optional[str] = None,
+        speaker_references: Optional[dict[str, str | list[str]]] = None,
+        similarity_threshold: float = 0.5,
         verbose: bool = True,
     ) -> list[Segment]:
         """
@@ -192,6 +412,11 @@ class PyannoteDiarizationEngine:
             min_speakers: Minimum number of speakers to consider.
             max_speakers: Maximum number of speakers to consider.
             use_auth_token: Authentication token for model download.
+            speaker_references: Optional dict mapping speaker names to reference audio paths.
+                e.g. {"Alice": "alice.wav", "Bob": ["bob1.wav", "bob2.wav"]}
+                When provided, detected speakers will be matched to these references.
+            similarity_threshold: Cosine similarity threshold for speaker matching (0-1).
+                Default 0.5 works well; raise to 0.6-0.7 for stricter matching.
             verbose: Whether to enable verbose logging.
 
         Returns:
@@ -212,6 +437,9 @@ class PyannoteDiarizationEngine:
         if isinstance(device, str):
             device = torch.device(device)
 
+        # Keep original audio path for speaker identification
+        audio_path = audio if isinstance(audio, str) else None
+        
         if isinstance(audio, str):
             audio = load_audio(audio)
 
@@ -261,6 +489,30 @@ class PyannoteDiarizationEngine:
             unique_speakers = diarization_df["speaker"].unique()
             logger.info(f"Diarization completed: found {len(unique_speakers)} speakers")
 
+        # Speaker identification: match detected speakers to known voice samples
+        if speaker_references and audio_path:
+            logger.info("Running speaker identification...")
+            identifier = SpeakerIdentifier(device=device)
+            speaker_profiles = identifier.build_speaker_profiles(speaker_references)
+            
+            if speaker_profiles:
+                speaker_mapping = identifier.identify_speakers(
+                    diarization_df, 
+                    audio_path,
+                    speaker_profiles,
+                    similarity_threshold=similarity_threshold
+                )
+                
+                # Apply mapping to diarization_df
+                if speaker_mapping:
+                    diarization_df["speaker"] = diarization_df["speaker"].apply(
+                        lambda s: speaker_mapping.get(s, s)
+                    )
+                    logger.info(f"Identified {len(speaker_mapping)} speakers: {speaker_mapping}")
+        elif speaker_references and not audio_path:
+            logger.warning("Speaker references provided but audio is numpy array; "
+                          "pass audio path for speaker identification")
+
         diarized_segments = self._assign_speakers(diarization_df, transcription_segments)
         return diarized_segments
 
@@ -273,6 +525,8 @@ def diarize(
     num_speakers: Optional[int] = None,
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
+    speaker_references: Optional[dict[str, str | list[str]]] = None,
+    similarity_threshold: float = 0.5,
 ) -> list[Segment]:
     """
     Convenience function to perform speaker diarization.
@@ -284,6 +538,11 @@ def diarize(
         num_speakers: Exact number of speakers (if known).
         min_speakers: Minimum number of speakers.
         max_speakers: Maximum number of speakers.
+        speaker_references: Optional dict mapping speaker names to reference audio paths.
+            e.g. {"Alice": "alice.wav", "Bob": ["bob1.wav", "bob2.wav"]}
+            When provided, detected speakers will be matched to these references.
+        similarity_threshold: Cosine similarity threshold for speaker matching (0-1).
+            Default 0.5 works well; raise to 0.6-0.7 for stricter matching.
 
     Returns:
         List of segments with speaker labels assigned in extra_data["speaker"].
@@ -296,6 +555,8 @@ def diarize(
         num_speakers=num_speakers,
         min_speakers=min_speakers,
         max_speakers=max_speakers,
+        speaker_references=speaker_references,
+        similarity_threshold=similarity_threshold,
     )
 
 
@@ -361,9 +622,13 @@ if __name__ == "__main__":
     # First transcribe
     segments, info = transcribe(audio_file)
     
+    speaker_refs = {
+        "rabbi": "C:\\portal\\diarization\\12345.mp3",
+        # "Bob": ["samples/bob1.wav", "samples/bob2.wav"],  # multiple = more robust
+    }
     if segments:
         # Then diarize
-        diarized_segments = diarize(audio_file, segments)
+        diarized_segments = diarize(audio_file, segments, speaker_references=speaker_refs)
         
         # Print results
         for seg in diarized_segments:

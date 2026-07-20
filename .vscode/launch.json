@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: uv run main.py",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "main",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "UV_PROJECT_ENVIRONMENT": "${workspaceFolder}/.venv"
+            },
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe"
+        },
+        {
+            "name": "Python: uv run diarize.py",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "diarize",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "UV_PROJECT_ENVIRONMENT": "${workspaceFolder}/.venv"
+            },
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe"
+        }
+    ]
+}

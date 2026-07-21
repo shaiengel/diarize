@@ -15,6 +15,7 @@ dependencies = [
     "huggingface-hub<0.24",
     "speechbrain<1.0",
     "numpy<2.0",
+    "pip-system-certs>=5.3",
 ]
 
 [[tool.uv.index]]

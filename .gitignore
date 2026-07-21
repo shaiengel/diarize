@@ -13,3 +13,5 @@ wheels/
 *.webm
 *.vtt
 *.mp3
+
+!recording-1784121028538.webm

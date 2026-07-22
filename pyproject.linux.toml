@@ -15,6 +15,7 @@ requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2.1",
     "pyannote-audio==3.3.2",
+    "huggingface_hub>=0.18,<1.0",
     "pandas>=2.0",
     "python-dotenv>=1.0",
     "torch>=2.4.0,<2.6",

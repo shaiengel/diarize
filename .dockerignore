@@ -1,0 +1,11 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.mp3
+*.mp4
+*.webm
+*.vtt
+.env
+uv.lock
+*.tar.gz

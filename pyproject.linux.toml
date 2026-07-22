@@ -2,30 +2,31 @@
 # Copy this to pyproject.toml when deploying on Linux
 #
 # SETUP:
-# 1. Install torch first (pick your GPU):
-#    # Older GPUs (Ampere/Ada):
-#    pip install torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu124
-#    # OR Blackwell/RTX 50-series:
-#    pip install torch==2.7.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
-#
-# 2. Then: pip install -e .
-# 3. Set: export HF_TOKEN=hf_xxx
-# 4. Install ffmpeg: sudo apt-get install -y ffmpeg
+# 1. uv sync
+# 2. Set: export HF_TOKEN=hf_xxx
+# 3. Install ffmpeg: sudo apt-get install -y ffmpeg
 
 [project]
 name = "diarization"
 version = "0.1.0"
 description = "Audio transcription and speaker diarization"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2.1",
     "pyannote-audio==3.3.2",
     "pandas>=2.0",
     "python-dotenv>=1.0",
-    # torch/torchaudio installed separately via --index-url for CUDA support
+    "torch>=2.4.0,<2.6",
+    "torchaudio>=2.4.0,<2.6",
 ]
+
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu124"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = []

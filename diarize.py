@@ -648,7 +648,7 @@ def segments_to_vtt(
 if __name__ == "__main__":
     from main import transcribe
 
-    audio_file = "recording-1784121028538.webm"
+    audio_file = os.getenv("AUDIO_FILE", "/app/data/recording-1784121028538.webm")
     #audio_file = "C:\\portal\\diarization\\abadyan.mp4"
     
     # First transcribe

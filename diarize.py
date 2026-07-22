@@ -31,6 +31,10 @@ import torch
 
 import warnings
 warnings.filterwarnings("ignore", message="TensorFloat-32.*has been disabled")
+warnings.filterwarnings("ignore", message="std\\(\\): degrees of freedom")
+warnings.filterwarnings("ignore", message="triton not found")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+#logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
 
 # Workaround for PyTorch 2.6+ weights_only=True default
 # pyannote models need this disabled to load properly
@@ -40,12 +44,14 @@ warnings.filterwarnings("ignore", message="TensorFloat-32.*has been disabled")
 # Workaround for PyTorch 2.6+ weights_only=True default
 # pyannote models need this disabled to load properly
 # Must FORCE override (not setdefault) because lightning_fabric passes weights_only=True explicitly
-_original_torch_load = torch.load
-def _patched_torch_load(*args, **kwargs):
-    kwargs["weights_only"] = False  # FORCE override, not setdefault
-    return _original_torch_load(*args, **kwargs)
-_patched_torch_load._diarize_patched = True
-torch.load = _patched_torch_load
+
+#####REMOVED!!
+# _original_torch_load = torch.load
+# def _patched_torch_load(*args, **kwargs):
+#     kwargs["weights_only"] = False  # FORCE override, not setdefault
+#     return _original_torch_load(*args, **kwargs)
+# _patched_torch_load._diarize_patched = True
+# torch.load = _patched_torch_load
 
 # _original_torch_load = torch.load
 # def _patched_torch_load(*args, **kwargs):
@@ -103,7 +109,7 @@ class SpeakerIdentifier:
         if self._inference is None:
             # Token only needed if downloading from HuggingFace (not for cached models)
             token = os.getenv("HF_TOKEN") or None
-            model = Model.from_pretrained(self.embedding_model, use_auth_token=token)
+            model = Model.from_pretrained(self.embedding_model, token=token)
             self._inference = Inference(model, window="whole")
             self._inference.to(self.device)
             logger.info(f"Loaded speaker embedding model '{self.embedding_model}' on {self.device}")
@@ -320,7 +326,7 @@ def load_audio(file: str, sr: int = SAMPLE_RATE) -> npt.NDArray:
 # Default diarization model (can be HuggingFace repo ID or local path)
 DEFAULT_DIARIZATION_MODEL = os.getenv(
     "DIARIZATION_MODEL",
-    "pyannote/speaker-diarization-3.1"
+    "pyannote/speaker-diarization-community-1"
 )
 
 
@@ -417,7 +423,7 @@ class PyannoteDiarizationEngine:
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
-        use_auth_token: Optional[str] = None,
+        token: Optional[str] = None,
         speaker_references: Optional[dict[str, str | list[str]]] = None,
         similarity_threshold: float = 0.5,
         verbose: bool = True,
@@ -430,13 +436,13 @@ class PyannoteDiarizationEngine:
             transcription_segments: List of transcription segments to assign speaker labels to.
             device: Device to run on ("cpu", "cuda", or torch.device).
             checkpoint_path: Model checkpoint path (local path or HuggingFace repo ID).
-                Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-3.1.
+                Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-community-1.
             embedding_model: Embedding model path for speaker identification.
                 Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
             num_speakers: Exact number of speakers (if known).
             min_speakers: Minimum number of speakers to consider.
             max_speakers: Maximum number of speakers to consider.
-            use_auth_token: Authentication token for model download.
+            token: Authentication token for model download.
             speaker_references: Optional dict mapping speaker names to reference audio paths.
                 e.g. {"Alice": "alice.wav", "Bob": ["bob1.wav", "bob2.wav"]}
                 When provided, detected speakers will be matched to these references.
@@ -473,8 +479,8 @@ class PyannoteDiarizationEngine:
             "sample_rate": SAMPLE_RATE,
         }
 
-        # Use HF_TOKEN from environment if use_auth_token not provided
-        token = use_auth_token or os.getenv("HF_TOKEN")
+        # Use HF_TOKEN from environment if token not provided
+        token = token or os.getenv("HF_TOKEN")
 
         # if token:
         #     from huggingface_hub import login
@@ -492,7 +498,7 @@ class PyannoteDiarizationEngine:
 
         logger.info("Loading diarization pipeline...")
         diarization_pipeline = Pipeline.from_pretrained(
-            checkpoint_path, use_auth_token=token
+            checkpoint_path, token=token
         ).to(device)
 
         logger.info("Running diarization...")
@@ -503,10 +509,12 @@ class PyannoteDiarizationEngine:
             max_speakers=max_speakers,
         )
 
-        diarization_df = pd.DataFrame(
-            diarization.itertracks(yield_label=True),
-            columns=["segment", "label", "speaker"],
-        )
+        # pyannote-audio 4.x returns DiarizeOutput with speaker_diarization iterator
+        diarization_data = [
+            {"segment": turn, "speaker": speaker}
+            for turn, speaker in diarization.speaker_diarization
+        ]
+        diarization_df = pd.DataFrame(diarization_data)
         diarization_df["start"] = diarization_df["segment"].apply(lambda x: x.start)
         diarization_df["end"] = diarization_df["segment"].apply(lambda x: x.end)
 
@@ -563,7 +571,7 @@ def diarize(
         transcription_segments: List of transcription segments from transcribe().
         device: Device to run on ("cpu" or "cuda").
         checkpoint_path: Model checkpoint path (local path or HuggingFace repo ID).
-            Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-3.1.
+            Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-community-1.
         embedding_model: Embedding model path for speaker identification.
             Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
         num_speakers: Exact number of speakers (if known).
@@ -650,16 +658,16 @@ if __name__ == "__main__":
     from main import transcribe
 
     audio_file = os.getenv("AUDIO_FILE", "/app/data/recording-1784121028538.webm")
-    #audio_file = "C:\\portal\\diarization\\abadyan.mp4"
+    # audio_file = "C:\\portal\\diarization\\abadyan.mp4"
     
     # First transcribe
     segments, info = transcribe(audio_file)
     
-    # speaker_refs = {
-    #     "rabbi": "C:\\portal\\diarization\\12345.mp3",
-    #     # "Bob": ["samples/bob1.wav", "samples/bob2.wav"],  # multiple = more robust
-    # }
-    speaker_refs = None  # or provide actual references if available
+    speaker_refs = {
+        "rabbi": "C:\\portal\\diarization\\12345.mp3",
+        # "Bob": ["samples/bob1.wav", "samples/bob2.wav"],  # multiple = more robust
+    }
+    # speaker_refs = None  # or provide actual references if available
     if segments:
         # Then diarize
         diarized_segments = diarize(audio_file, segments, speaker_references=speaker_refs)

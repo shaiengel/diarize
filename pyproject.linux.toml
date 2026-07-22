@@ -1,10 +1,10 @@
-# pyproject.toml for Linux
-# Copy this to pyproject.toml when deploying on Linux
+# pyproject.toml for Linux with CUDA 13.x
+# Copy this to pyproject.toml when deploying on Linux (Amazon Linux 2023)
 #
 # SETUP:
 # 1. uv sync
 # 2. Set: export HF_TOKEN=hf_xxx
-# 3. Install ffmpeg: sudo apt-get install -y ffmpeg
+# 3. Install ffmpeg: sudo dnf install -y ffmpeg-free
 
 [project]
 name = "diarization"
@@ -14,17 +14,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2.1",
-    "pyannote-audio==3.3.2",
-    "huggingface_hub>=0.18,<1.0",
+    "pyannote-audio>=4.0",
     "pandas>=2.0",
     "python-dotenv>=1.0",
-    "torch>=2.4.0,<2.6",
-    "torchaudio>=2.4.0,<2.6",
-    "matplotlib>=3.8",
+    "torch>=2.11",
 ]
 
 [[tool.uv.index]]
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
 
 [build-system]
 requires = ["hatchling"]

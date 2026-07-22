@@ -48,6 +48,8 @@ ENV DEVICE=cuda
 ENV PYTHONUNBUFFERED=1
 
 # or more precisely, if huggingface_hub expects a "hub" subfolder:
+ENV PYANNOTE_CACHE=/opt/models/pyannote 
+ENV HF_HUB_CACHE=/opt/models/pyannote    
 ENV HUGGINGFACE_HUB_CACHE=/opt/models/pyannote
 ENV HF_HUB_OFFLINE=1
 

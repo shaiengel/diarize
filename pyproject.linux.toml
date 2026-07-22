@@ -20,6 +20,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "torch>=2.4.0,<2.6",
     "torchaudio>=2.4.0,<2.6",
+    "matplotlib>=3.8",
 ]
 
 [[tool.uv.index]]

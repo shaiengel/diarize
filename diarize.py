@@ -103,7 +103,7 @@ class SpeakerIdentifier:
         if self._inference is None:
             # Token only needed if downloading from HuggingFace (not for cached models)
             token = os.getenv("HF_TOKEN") or None
-            model = Model.from_pretrained(self.embedding_model, token=token)
+            model = Model.from_pretrained(self.embedding_model, use_auth_token=token)
             self._inference = Inference(model, window="whole")
             self._inference.to(self.device)
             logger.info(f"Loaded speaker embedding model '{self.embedding_model}' on {self.device}")
@@ -320,7 +320,7 @@ def load_audio(file: str, sr: int = SAMPLE_RATE) -> npt.NDArray:
 # Default diarization model (can be HuggingFace repo ID or local path)
 DEFAULT_DIARIZATION_MODEL = os.getenv(
     "DIARIZATION_MODEL",
-    "pyannote/speaker-diarization-community-1"
+    "pyannote/speaker-diarization-3.1"
 )
 
 
@@ -417,7 +417,7 @@ class PyannoteDiarizationEngine:
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
-        token: Optional[str] = None,
+        use_auth_token: Optional[str] = None,
         speaker_references: Optional[dict[str, str | list[str]]] = None,
         similarity_threshold: float = 0.5,
         verbose: bool = True,
@@ -430,13 +430,13 @@ class PyannoteDiarizationEngine:
             transcription_segments: List of transcription segments to assign speaker labels to.
             device: Device to run on ("cpu", "cuda", or torch.device).
             checkpoint_path: Model checkpoint path (local path or HuggingFace repo ID).
-                Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-community-1.
+                Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-3.1.
             embedding_model: Embedding model path for speaker identification.
                 Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
             num_speakers: Exact number of speakers (if known).
             min_speakers: Minimum number of speakers to consider.
             max_speakers: Maximum number of speakers to consider.
-            token: Authentication token for model download.
+            use_auth_token: Authentication token for model download.
             speaker_references: Optional dict mapping speaker names to reference audio paths.
                 e.g. {"Alice": "alice.wav", "Bob": ["bob1.wav", "bob2.wav"]}
                 When provided, detected speakers will be matched to these references.
@@ -473,8 +473,8 @@ class PyannoteDiarizationEngine:
             "sample_rate": SAMPLE_RATE,
         }
 
-        # Use HF_TOKEN from environment if token not provided
-        token = token or os.getenv("HF_TOKEN")
+        # Use HF_TOKEN from environment if use_auth_token not provided
+        token = use_auth_token or os.getenv("HF_TOKEN")
 
         # if token:
         #     from huggingface_hub import login
@@ -492,7 +492,7 @@ class PyannoteDiarizationEngine:
 
         logger.info("Loading diarization pipeline...")
         diarization_pipeline = Pipeline.from_pretrained(
-            checkpoint_path, token=token
+            checkpoint_path, use_auth_token=token
         ).to(device)
 
         logger.info("Running diarization...")
@@ -563,7 +563,7 @@ def diarize(
         transcription_segments: List of transcription segments from transcribe().
         device: Device to run on ("cpu" or "cuda").
         checkpoint_path: Model checkpoint path (local path or HuggingFace repo ID).
-            Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-community-1.
+            Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-3.1.
         embedding_model: Embedding model path for speaker identification.
             Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
         num_speakers: Exact number of speakers (if known).

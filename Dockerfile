@@ -40,12 +40,21 @@ COPY main.py diarize.py ./
 RUN uv sync --no-dev --no-install-project
 
 # Create directories for models
-RUN mkdir -p /opt/models /root/.cache/torch/pyannote
+RUN mkdir -p /opt/models /opt/models/pyannote
 
 # Environment variables
 ENV TORCH_HOME=/root/.cache/torch
 ENV DEVICE=cuda
 ENV PYTHONUNBUFFERED=1
 
+# or more precisely, if huggingface_hub expects a "hub" subfolder:
+ENV HUGGINGFACE_HUB_CACHE=/opt/models/pyannote
+ENV HF_HUB_OFFLINE=1
+
+# Model paths (can be HuggingFace repo IDs or local paths)
+# When mounting cached models, override these with local paths
+ENV WHISPER_MODEL=/opt/models/ivrit-ai--whisper-large-v3-turbo-ct2
+ENV DIARIZATION_MODEL=pyannote/speaker-diarization-3.1
+ENV EMBEDDING_MODEL_PATH=pyannote/wespeaker-voxceleb-resnet34-LM
 # Default command (override as needed)
 CMD ["uv", "run", "python", "diarize.py"]

@@ -1,6 +1,7 @@
 """Audio transcription using faster-whisper."""
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,12 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Default whisper model (can be HuggingFace repo ID or local path)
+DEFAULT_WHISPER_MODEL = os.getenv(
+    "WHISPER_MODEL",
+    "ivrit-ai/whisper-large-v3-turbo-ct2"
+)
 
 
 @dataclass
@@ -52,12 +59,12 @@ def load_model() -> WhisperModel:
     
 
     _model = WhisperModel(
-        "ivrit-ai/whisper-large-v3-turbo-ct2",
+        DEFAULT_WHISPER_MODEL,
         device="cuda",
         compute_type="int8_float16",
     )
 
-    logger.info("Model loaded successfully")
+    logger.info(f"Model '{DEFAULT_WHISPER_MODEL}' loaded successfully")
     return _model
 
 def _format_timestamp(seconds: float) -> str:

@@ -1,0 +1,66 @@
+#cloud-config
+runcmd:
+  # wait for docker + network
+  - until docker info >/dev/null 2>&1; do sleep 5; done
+
+  # download model if not already present
+  - |
+    if [ ! -f /opt/dlami/nvme/models/ivrit-ai--whisper-large-v3-turbo-ct2/model.bin ]; then
+      echo "Downloading model from S3..."
+      aws s3 sync s3://timlalti-ai-models/ivrit-ai--whisper-large-v3-turbo-ct2/ /opt/dlami/nvme/models/ivrit-ai--whisper-large-v3-turbo-ct2/ --no-progress
+    else
+      echo "Model already exists, skipping download."
+    fi
+
+  - |
+    if [ ! -f /opt/dlami/nvme/models/pyannote/models--pyannote--speaker-diarization-3.1/refs/main ]; then    
+      echo "Downloading pyannote models from S3..."
+      mkdir -p /opt/dlami/nvme/models/pyannote
+      aws s3 cp s3://timlalti-ai-models/pyannote-cache.tar.gz - | tar -xzv -C /opt/dlami/nvme/models/pyannote/ --strip-components=1
+    else
+      echo "Pyannote models already exist, skipping download."
+    fi 
+
+  # download and load docker image from S3
+  #- aws s3 cp s3://portal-docker-images/diarize.tar.gz - | docker load
+
+  # create CloudWatch Agent config
+  # - |
+  #   mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+
+  #   cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+  #   {
+  #     "logs": {
+  #       "logs_collected": {
+  #         "files": {
+  #           "collect_list": [
+  #             {
+  #               "file_path": "/var/lib/docker/containers/*/*-json.log",
+  #               "log_group_name": "/docker/diarize",
+  #               "log_stream_name": "{instance_id}",
+  #               "timestamp_format": "%Y-%m-%dT%H:%M:%S"
+  #             }
+  #           ]
+  #         }
+  #       }
+  #     }
+  #   }
+  #   EOF
+
+  # # start CloudWatch Agent
+  # - |
+  #   /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  #     -a fetch-config \
+  #     -m ec2 \
+  #     -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+  #     -s
+
+  # run container
+  - |
+    docker run -d \
+      --name diarize \
+      --gpus all \
+      --restart unless-stopped \
+      -v /opt/dlami/nvme/models/ivrit-ai--whisper-large-v3-turbo-ct2:/opt/models/ivrit-ai--whisper-large-v3-turbo-ct2:ro \
+      -v /opt/dlami/nvme/models/pyannote:/opt/models/pyannote:ro \
+      diarize:1

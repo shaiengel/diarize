@@ -72,13 +72,29 @@ SAMPLE_RATE = 16000
 # SPEAKER IDENTIFICATION — match detected speakers to known voice samples
 # =============================================================================
 
+# Default model identifiers (can be HuggingFace repo IDs or local paths)
+DEFAULT_EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL_PATH", 
+    "pyannote/wespeaker-voxceleb-resnet34-LM"
+)
+
+
 class SpeakerIdentifier:
     """Identifies speakers by matching voice embeddings to reference samples."""
     
-    EMBEDDING_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"
-    
-    def __init__(self, device: torch.device | str = "cpu"):
+    def __init__(
+        self, 
+        device: torch.device | str = "cpu",
+        embedding_model: Optional[str] = None,
+    ):
+        """
+        Args:
+            device: Device to run inference on ("cpu" or "cuda").
+            embedding_model: Path to embedding model (local path or HuggingFace repo ID).
+                Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
+        """
         self.device = torch.device(device) if isinstance(device, str) else device
+        self.embedding_model = embedding_model or DEFAULT_EMBEDDING_MODEL
         self._inference: Optional[Inference] = None
     
     @property
@@ -86,10 +102,10 @@ class SpeakerIdentifier:
         """Lazy-load the embedding model."""
         if self._inference is None:
             token = os.getenv("HF_TOKEN")
-            model = Model.from_pretrained(self.EMBEDDING_MODEL, token=token)
+            model = Model.from_pretrained(self.embedding_model, token=token)
             self._inference = Inference(model, window="whole")
             self._inference.to(self.device)
-            logger.info(f"Loaded speaker embedding model on {self.device}")
+            logger.info(f"Loaded speaker embedding model '{self.embedding_model}' on {self.device}")
         return self._inference
     
     def _to_wav16k(self, src: str) -> str:
@@ -300,11 +316,15 @@ def load_audio(file: str, sr: int = SAMPLE_RATE) -> npt.NDArray:
     return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
+# Default diarization model (can be HuggingFace repo ID or local path)
+DEFAULT_DIARIZATION_MODEL = os.getenv(
+    "DIARIZATION_MODEL",
+    "pyannote/speaker-diarization-3.1"
+)
+
+
 class PyannoteDiarizationEngine:
     """Speaker diarization engine using PyAnnote.audio pipeline."""
-
-    #DEFAULT_CHECKPOINT = "ivrit-ai/pyannote-speaker-diarization-3.1"
-    DEFAULT_CHECKPOINT = "pyannote/speaker-diarization-3.1"
 
 
     def _match_speaker_to_interval(
@@ -392,6 +412,7 @@ class PyannoteDiarizationEngine:
         *,
         device: str | torch.device | None = None,
         checkpoint_path: Optional[str] = None,
+        embedding_model: Optional[str] = None,
         num_speakers: Optional[int] = None,
         min_speakers: Optional[int] = None,
         max_speakers: Optional[int] = None,
@@ -407,7 +428,10 @@ class PyannoteDiarizationEngine:
             audio: Path to audio file or NumPy array containing audio waveform.
             transcription_segments: List of transcription segments to assign speaker labels to.
             device: Device to run on ("cpu", "cuda", or torch.device).
-            checkpoint_path: Model checkpoint path.
+            checkpoint_path: Model checkpoint path (local path or HuggingFace repo ID).
+                Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-3.1.
+            embedding_model: Embedding model path for speaker identification.
+                Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
             num_speakers: Exact number of speakers (if known).
             min_speakers: Minimum number of speakers to consider.
             max_speakers: Maximum number of speakers to consider.
@@ -422,7 +446,7 @@ class PyannoteDiarizationEngine:
         Returns:
             List of transcription segments with speaker labels assigned.
         """
-        checkpoint_path = checkpoint_path or self.DEFAULT_CHECKPOINT
+        checkpoint_path = checkpoint_path or DEFAULT_DIARIZATION_MODEL
 
         # Auto-detect device if not specified
         if device is None:
@@ -492,7 +516,7 @@ class PyannoteDiarizationEngine:
         # Speaker identification: match detected speakers to known voice samples
         if speaker_references and audio_path:
             logger.info("Running speaker identification...")
-            identifier = SpeakerIdentifier(device=device)
+            identifier = SpeakerIdentifier(device=device, embedding_model=embedding_model)
             speaker_profiles = identifier.build_speaker_profiles(speaker_references)
             
             if speaker_profiles:
@@ -522,6 +546,8 @@ def diarize(
     transcription_segments: list[Segment],
     *,
     device: str | None = None,
+    checkpoint_path: Optional[str] = None,
+    embedding_model: Optional[str] = None,
     num_speakers: Optional[int] = None,
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
@@ -535,6 +561,10 @@ def diarize(
         audio_path: Path to the audio file.
         transcription_segments: List of transcription segments from transcribe().
         device: Device to run on ("cpu" or "cuda").
+        checkpoint_path: Model checkpoint path (local path or HuggingFace repo ID).
+            Defaults to DIARIZATION_MODEL env var or pyannote/speaker-diarization-3.1.
+        embedding_model: Embedding model path for speaker identification.
+            Defaults to EMBEDDING_MODEL_PATH env var or pyannote/wespeaker-voxceleb-resnet34-LM.
         num_speakers: Exact number of speakers (if known).
         min_speakers: Minimum number of speakers.
         max_speakers: Maximum number of speakers.
@@ -552,6 +582,8 @@ def diarize(
         audio_path,
         transcription_segments,
         device=device,
+        checkpoint_path=checkpoint_path,
+        embedding_model=embedding_model,
         num_speakers=num_speakers,
         min_speakers=min_speakers,
         max_speakers=max_speakers,

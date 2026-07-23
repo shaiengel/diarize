@@ -13,7 +13,7 @@ runcmd:
     fi
 
   - |
-    if [ ! -f /opt/dlami/nvme/models/pyannote/models--pyannote--speaker-diarization-3.1/refs/main ]; then    
+    if [ ! -f /opt/dlami/nvme/models/pyannote/models--pyannote--speaker-diarization-community-1/refs/main ]; then    
       echo "Downloading pyannote models from S3..."
       mkdir -p /opt/dlami/nvme/models/pyannote
       aws s3 cp s3://timlalti-ai-models/pyannote-cache.tar.gz - | tar -xzv -C /opt/dlami/nvme/models/pyannote/ --strip-components=1

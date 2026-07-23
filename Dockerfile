@@ -1,29 +1,27 @@
-FROM nvidia/cuda:12.4.0-base-ubuntu22.04
+FROM nvidia/cuda:13.0.0-base-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add NVIDIA CUDA repo for cuDNN 9
+# Install Python 3.12 + ffmpeg + add CUDA 12 repo for compat libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     curl \
     wget \
     gnupg \
-    && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb \
-    && rm cuda-keyring_1.1-1_all.deb \
-    && apt-get update
-
-# Install Python 3.12 + CUDA libs + ffmpeg
-RUN add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     python3.12 \
     python3.12-venv \
     python3.12-dev \
-    libcudnn9-cuda-12 \
-    libcublas-12-4 \
-    ffmpeg \
+    && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && rm cuda-keyring_1.1-1_all.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libcublas-12-6 \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/cache/apt/archives/*
+
+# CUDA 12 libs needed by faster-whisper/ctranslate2
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:$LD_LIBRARY_PATH
 
 # Install uv package manager
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -56,7 +54,7 @@ ENV HF_HUB_OFFLINE=1
 # Model paths (can be HuggingFace repo IDs or local paths)
 # When mounting cached models, override these with local paths
 ENV WHISPER_MODEL=/opt/models/ivrit-ai--whisper-large-v3-turbo-ct2
-ENV DIARIZATION_MODEL=pyannote/speaker-diarization-3.1
+ENV DIARIZATION_MODEL=pyannote/speaker-diarization-community-1
 ENV EMBEDDING_MODEL_PATH=pyannote/wespeaker-voxceleb-resnet34-LM
 # Default command (override as needed)
 CMD ["uv", "run", "python", "diarize.py"]
